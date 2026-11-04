@@ -3,30 +3,92 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, chore/bootstrap-project]
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    shell: bash
 jobs:
+  workflow:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate GitHub Actions workflows
+        env:
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          echo "$ACTIONLINT_SHA256  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
   build:
     name: Android build and lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
           cmdline-tools-version: '15859902'
           packages: 'platform-tools'
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
       - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
       - run: chmod +x gradlew
-      - run: ./gradlew --no-daemon assembleDebug lintDebug
-      - uses: actions/upload-artifact@v4
+      - name: Build, lint and run local unit tests
+        run: ./gradlew --no-daemon assembleDebug lintDebug testDebugUnitTest
+      - name: Record build identity
+        env:
+          NOMI_REPOSITORY: ${{ github.repository }}
+          NOMI_COMMIT: ${{ github.sha }}
+          NOMI_RUN_ID: ${{ github.run_id }}
+          NOMI_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          metadata = {key.removeprefix("NOMI_").lower(): value for key, value in os.environ.items() if key.startswith("NOMI_")}
+          Path("artifacts/build.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+          printf '### nomi-watch\nCommit: %s\n' "$NOMI_COMMIT" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Wear OS debug APK
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: nomi-watch-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: nomi-watch-debug-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            artifacts/build.json
+          if-no-files-found: error
           retention-days: 7
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nomi-watch-reports-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            app/build/reports/lint-results-debug.*
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Explain artifact scope
+        run: echo 'APK debug para testes. Sem assinatura de distribuição, publicação ou teste instrumentado em dispositivo. A tarefa de teste pode indicar NO-SOURCE enquanto não houver testes locais.' >> "$GITHUB_STEP_SUMMARY"
