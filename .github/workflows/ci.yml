@@ -1,0 +1,31 @@
+name: Wear OS CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, chore/bootstrap-project]
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Android build and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '15859902'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - run: chmod +x gradlew
+      - run: ./gradlew --no-daemon assembleDebug lintDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nomi-watch-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
