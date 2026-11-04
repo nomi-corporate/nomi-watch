@@ -1,3 +1,7 @@
+# Direção atual
+
+Wear OS é a plataforma definida em 04/11/2026. Critérios abaixo referentes ao RM22 são históricos e precisam de refinamento para o cliente Kotlin/Compose; não bloqueiam a base Wear OS.
+
 # Backlog inicial do smartwatch
 
 ## SPIKE-W01 — Verificar viabilidade do RM22
